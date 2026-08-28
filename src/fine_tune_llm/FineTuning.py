@@ -64,28 +64,7 @@ train_data = dataset['train']
 test_data = dataset['test']
 print(f"Train rows: {len(train_data)}, Test rows: {len(test_data)}")
 
-def tokenize_function(examples):
-    texts = [
-        f"### Instruction:\n{inst}\n\n### Response:\n{resp}"
-        for inst, resp in zip(examples["instruction"], examples["response"])
-    ]
 
-    tokenized = tokenizer(
-        texts,
-        truncation=True,
-        max_length=512,
-        padding="max_length"
-    )
-    tokenized["labels"] = tokenized["input_ids"].copy()
-    return tokenized
-
-tokenized_datasets = dataset.map(
-    tokenize_function,
-    batched=True,
-    remove_columns=dataset["train"].column_names
-)
-
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
 !pip install trl
 
