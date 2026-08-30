@@ -29,27 +29,27 @@ def Calculator(A:int | float,B:int | float, operator :str):
 
 
 client =OpenAI(
-    base_url='http://localhost:11434',
+    base_url='http://localhost:11434/v1/',
     api_key='ollama'
 )
 
-response = client.chat.completions.create(
-    model='qwen2.5-coder:3b',
+completion = client.chat.completions.create(
+    model='qwen2.5:7b',
     messages=[
         {
-        'role':'assistant','content':'You are a helpful assistant you will use The Function i supplied you with in case you need them !'
+        'role':'system','content':'You are a helpful assistant you will use The Functions if you need up to date information '
         },
         {
-            'role':'user','content':'Who is the current president of algeria'        }
+            'role':'user','content':'Who is the current president of algeria of 2026'        }
     ],
     functions=[
         {
             "name": "Search",
-            "description":"Search wikipedia for information",
+            "description":"Search wikipedia for up to date information and current news or facts",
             "parameters" :{
                 "type": "object",
-                "properties":{"input":{"type":"string"}},
-                "required": ["input"]
+                "properties":{"query":{"type":"string"}},
+                "required": ["query"]
             }
         },
         {
@@ -63,7 +63,7 @@ response = client.chat.completions.create(
                         'B':{"type":"number", "description":"The secondnumber"}
                         ,'operator':{
                             'type':'string',
-                            'enum':{"+",'-','/','*'},
+                            'enum':["+",'-','/','*'],
                             'description':"the math operations to perform ",
                         }
                     }
