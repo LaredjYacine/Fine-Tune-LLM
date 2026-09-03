@@ -383,3 +383,5 @@ while True:
 
 print(execute_supabase("supabase_client.table('Products').select('stock').execute()"))
 
+
+#The code works perfectly !
