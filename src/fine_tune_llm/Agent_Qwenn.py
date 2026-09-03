@@ -7,25 +7,61 @@ Original file is located at
     https://colab.research.google.com/drive/1mJLXDf4-2CHKprB3auvkjNvYWnrLExFf
 """
 
+!sudo apt-get update -qq
+!sudo apt-get install -y zstd
+!curl -fsSL https://ollama.com/install.sh | sh
+
+!pip install wikipedia
+
+!pip install supabase
 
 import subprocess
 import time
 import ast
-
 from os import name
-
+import os
 from openai import OpenAI
 import wikipedia
+import dotenv
+from supabase import create_client, Client
+import json
 
+!ollama pull qwen2.5:7b
 
+subprocess.Popen(
+    ["ollama", "serve"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL
+)
 
+time.sleep(3)
 
+from google.colab import userdata
+
+key= userdata.get('Supabase_Key')
+url= userdata.get('supabase_url')
+supabase_client= create_client(url,key)
+
+def execute_supabase(query:str):
+  try :
+    safe_globals = {
+    "__builtins__": {},
+    "supabase_client": supabase_client
+}
+    qrlower = query.lower()
+    if "delete" in qrlower or "drop" in qrlower or "truncate" in qrlower  :
+      return 'Cannot execute that code  '
+
+    return eval(query, safe_globals)
+  except Exception as e:
+    print('Error occured , Details : ', e )
+    return e
 wikipedia.set_rate_limiting(True)
 
 def Search(query:str):
     try:
         wikipedia.set_user_agent("finetuneLLM/1.0 (contact@example.com)")
-        page = wikipedia.search(query,results=10)
+        page = wikipedia.search(query,results=5)
         if  page:
             return page
         return None
@@ -56,8 +92,9 @@ def Calculator(A:int | float,B:int | float, operator :str):
 
 def Search_page(query):
   try :
+        print('Search _page ' , query )
         wikipedia.set_user_agent("finetuneLLM/1.0 (contact@example.com)")
-        page = wikipedia.summary(query,auto_suggest=False)
+        page = wikipedia.summary(query,auto_suggest=False, sentences=5)
         if page :
             return page
         return None
@@ -66,43 +103,24 @@ def Search_page(query):
       print('error occured at search page ' , e )
       return None
 
-userinput='what is ur name ? '
+def get_schema(table_name):
+  try:
+      return supabase_client.rpc(
+          "get_table_schema",
+          {"table_name": table_name}
+      ).execute()
+  except Exception as e :
+    return e
 
-client =OpenAI(
-    base_url='http://localhost:11434/v1/',
-    api_key='ollama'
-)
-answer = client.responses.create(
-    model="qwen2.5:7b",
-    input=[
-    {
-        "role": "system",
-        "content": """
-You are a ReAct agent.
+def get_tables():
+  try  :
+    return supabase_client.rpc("get_all_database_tables").execute()
+  except Exception as e :
+    return e
 
-You have access to Search and Calculator tools.
+userinput='  who is the current  president of algeria?    '
 
-Rules:
-1. Use Search whenever the user asks for current, recent, updated,
-   live, or time-sensitive information.
-2. Use Calculator for mathematical calculations.
-3. Do not answer from your own knowledge when Search is required.
-4. After receiving a tool result, analyze it and determine whether
-   another tool call is necessary.
-5. Only provide the final answer when you have enough information.
-6. the Search will return summaries analyze them to answer the user Do not mention that u have context just answer naturally
-7. If the user asks multiple questions, answer ALL of them.
-After calling multiple tools, use ALL tool results in the final answer.
-Never ignore a completed tool call.
-8- REQUIRED  answer naturally do not mention receiving any information
-"""
-    },
-    {
-        "role": "user",
-        "content": f"{userinput}"
-    }
-],
-    tools=cast(any,[
+tools=[
         {
             "name": "Search",
             "type": "function",
@@ -140,66 +158,228 @@ Never ignore a completed tool call.
                 "required": ["operation", "numbers"],
             },
         },
-    ])
+           {
+        "type": "function",
+        "name": "execute_supabase",
+        "description": (
+            "Execute a Supabase query for retrieving or modifying data. using the supabase_client  python client    The query must be written as Python code using the `supabase_client` object Do NOT generate raw SQL."
+            "The query may perform SELECT, INSERT, UPDATE, UPSERT, or other "
+            "non-destructive operations. DELETE, DROP, and TRUNCATE operations "
+            "are forbidden."
+            "you can only use Supabase commands For example supabase_client.table('Table_Name').select('*').execute()"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "The complete Python/Supabase query to execute. "
+                        "Do not use DELETE, DROP, or TRUNCATE."
+                    )
+                }
+            },
+            "required": ["query"]
+        }
+    },
+
+    {
+        "type": "function",
+        "name": "get_schema",
+        "description": """ Returns the columns and structure of a specific database table.
+
+The user must provide the table name.
+This tool also validates whether the table exists.
+
+If the table does not exist, do not call execute_supabase().
+Ask the user for a valid table name.
+
+If the table exists, inspect the schema and then use execute_supabase()
+to answer the user's database question.""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table_name": {
+                    "type": "string",
+                    "description": "The name of the database table to inspect."
+                }
+            },
+            "required": ["table_name"]
+        }
+    }
+    ]
+
+instructions =  """
+ You are a ReAct agent.
+
+Use the provided tools to solve the user's request.
+Follow the rules to solve the users request
+
+RULES:
+
+- If the user asks about Supabase data, use the database tools.
+- The user must provide the table name.
+- Always call get_schema first for a database question.
+- If get_schema says the table does not exist, ask the user for a valid table name.
+- If the table exists, use execute_supabase to retrieve the requested data.
+- Never invent tools.
+- Never write code pretending to call a tool.
+- Never write SQL.
+- When you need a tool, emit an actual function call.
+- Do not describe the function call in text.
+- Only give a final answer when the question is solved.
+-If a Supabase query returns an error, DO NOT repeat the same query.
+  Change the query based on the error.
+-CRITICALL a Supabase Query must be in this format : execute_supabase(
+  "supabase_client.table('Products').select('*', count='exact').execute()"
 )
 
-import json
-print(answer.id)
+CRITICAL : Follow this Supabase Syntax :
+ execute_supabase(
+  "supabase_client.table('Products').select('*', count='exact').execute()"
+)
 
-while True :
+ execute_supabase(
+  "supabase_client.table('Products').select('name, price').execute()"
+)
 
+ execute_supabase(
+  "supabase_client.table('Products').select('*').eq('category', 'Electronics').execute()"
+)
 
-  theoutput=[]
-  if not answer.output:
-    print('the answer is empty ')
-    break
-  for output in answer.output :
-    print(output.type)
+ execute_supabase(
+  "supabase_client.table('Products').select('*').gt('price', 50).execute()"
+)
 
-    if output.type !=  'function_call':
-      continue
-    match output.name :
-        case 'Search':
-          asn = output.arguments
-          query = json.loads(asn)
-          query = query['query']
-          print(query)
-          res = Search(query)
+ execute_supabase(
+  "supabase_client.table('Products').select('*').order('price', desc=True).execute()"
+)
 
-          summary_strings=[]
-          for result in res :
-            summary = Search_page(result)
-            if summary is not None:
-              summary_strings.append(f'query is : {result} and summary is {summary}')
-          if summary_strings :
-            summary_strings= ','.join(summary_strings)
+ execute_supabase(
+  "supabase_client.table('Products').select('*').range(0, 9).execute()"
+)
 
-            theoutput.append( { "type": "function_call_output","call_id":output.call_id ,"output": summary_strings})
+ execute_supabase(
+  "supabase_client.table('Products').select('*').ilike('name', 'Smart%').execute()"
+)
 
+ execute_supabase(
+  "supabase_client.table('Products').select('*').in_('category', ['Electronics', 'Books']).execute()"
+)
 
-        case 'Calculator':
-          arg = json.loads(output.arguments)
-          A,B = arg['numbers']
-          operation =arg['operation']
-          result = Calculator(A,B,operation)
-          theoutput.append({"type": "function_call_output","call_id":output.call_id,"output": str(result)})
-          print('Calculator search id ', output.call_id)
+ execute_supabase(
+  "supabase_client.table('Products').insert({'name': 'Keyboard', 'price': 29.99}).execute()"
+)
 
-
-  if not theoutput:
-    print(answer.output_text)
-    break
-  answer = client.responses.create(
-        model= "qwen2.5:7b",
-        previous_response_id=answer.id   ,
-        input =  f"""
-Original user question:
-{userinput}
-
-Tool results:
-{theoutput}
-
-Now answer ALL parts of the original user question.
+ execute_supabase(
+  "supabase_client.table('Products').insert([{'name': 'Mouse', 'price': 15.99}, {'name': 'Monitor', 'price': 199.99}]).execute()"
+)
 """
 
+client =OpenAI(
+    base_url='http://localhost:11434/v1/',
+    api_key='ollama'
+)
+answer = client.responses.create(
+    model="qwen2.5:7b",
+    input=[
+    {
+        "role": "system",
+        "content": f"{instructions}"
+    },
+    {
+        "role": "user",
+        "content": f"{userinput}"
+    }
+],
+    tools=tools,
+ )
+
+answer.output[0]
+
+MaxIter = 10
+i = 0
+messages = [{"role": "user", "content": userinput}]
+print(messages)
+while True:
+    has_tool = False
+    i += 1
+    print(i)
+    if i > MaxIter:
+        print(f'we couldnt finish this task under {i} loops ')
+        print(messages)
+        break
+
+    theoutput = []
+    if not answer.output:
+        print('the answer is empty ')
+        break
+
+    for item in answer.output:
+        messages.append(item.model_dump(exclude_none=True))
+
+    for output in answer.output:
+        print(output.type)
+        if output.type != 'function_call':
+            continue
+        has_tool = True
+        match output.name:
+            case 'Search':
+                asn = output.arguments
+                query = json.loads(asn)
+                query = query['query']
+                print(query)
+                res = Search(query)
+                summary_strings = []
+                for result in res:
+                    summary = Search_page(result)
+                    if summary is not None:
+                        summary_strings.append(f'query is : {result} and summary is {summary}')
+                if summary_strings:
+                    summary_strings = ','.join(summary_strings)
+                    theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(summary_strings)})
+            case 'Calculator':
+                arg = json.loads(output.arguments)
+                A, B = arg['numbers']
+                operation = arg['operation']
+                result = Calculator(A, B, operation)
+                theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(result)})
+                print('Calculator search id ', output.call_id)
+            case 'execute_supabase':
+                print('execute supa')
+                arg = json.loads(output.arguments)
+                print(arg['query'])
+                try:
+                    data = execute_supabase(arg['query'])
+                    theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(data)})
+                except Exception as E:
+                    theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(E)})
+            case 'get_schema':
+                print('schema get')
+                arg = json.loads(output.arguments)
+                data = get_schema(arg['table_name'])
+                theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(data)})
+            case 'get_tables':
+                data = get_tables()
+                theoutput.append({"type": "function_call_output", "call_id": output.call_id, "output": str(data)})
+
+    if has_tool == False:
+        print('The message is ', answer.output_text)
+        print('\n \n \n \n Messages,', messages)
+        break
+
+    for result_item in theoutput:
+        messages.append(result_item)
+    print('here ')
+    print("messages length:", len(str(messages)))
+    print("messages chars:", len(str(messages)))
+    answer = client.responses.create(
+        model="qwen2.5:7b",
+        instructions=instructions,
+        input=messages,
+        tools=tools,
     )
+    print("finished")
+
+print(execute_supabase("supabase_client.table('Products').select('stock').execute()"))
+

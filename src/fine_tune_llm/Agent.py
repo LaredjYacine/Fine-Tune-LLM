@@ -95,8 +95,8 @@ def Agent_Search_Calculate(User_Input):
                         "type":"string"
                         ,"description":"the search query"
                     }}
-                }
                 ,"required":['query']
+                }
             },
             {
                 "name": "Calculator",
