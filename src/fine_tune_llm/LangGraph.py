@@ -241,6 +241,36 @@ def should_continue(state: MessagesState) -> Literal["tool_node", END]:
     return 'tool_node'
   return END
 
+import json
+import time
+import uuid
+
+def log_step(step_type: str, node_name: str, data: dict):
+    entry = {
+        "timestamp": time.time(),
+        "step_id": str(uuid.uuid4()),
+        "step_type": step_type,
+        "node": node_name,
+        "data": data
+    }
+    with open("agent_trace.jsonl", "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+from langchain_core.callbacks import BaseCallbackHandler
+
+class JSONTraceLogger(BaseCallbackHandler):
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        log_step("llm_start", "llm", {"prompts": prompts})
+
+    def on_llm_end(self, response, **kwargs):
+        log_step("llm_end", "llm", {"response": str(response)})
+
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        log_step("tool_start", serialized.get("name"), {"input": input_str})
+
+    def on_tool_end(self, output, **kwargs):
+        log_step("tool_end", "tool", {"output": str(output)})
+
 agent_builder = StateGraph(MessagesState)
 
 agent_builder.add_node('llm_calls' , llm_calls)
@@ -260,8 +290,8 @@ display(Image(agent.get_graph(xray=True).draw_mermaid_png()))
 
 # Invoke
 from langchain.messages import HumanMessage
-messages = [HumanMessage(content="who is fantano?")]
-result = agent.invoke({"messages": messages}, config={"recursion_limit":24})
+messages = [HumanMessage(content="add a product in my products table with the name = TestingCPU and price = 24 after adding it let me see all the products in my table ")]
+result = agent.invoke({"messages": messages}, config={"recursion_limit":24, "callbacks":[JSONTraceLogger()]})
 print(f"Total messages: {len(result['messages'])}")
 for m in result["messages"]:
     print(type(m).__name__, "->", repr(m.content), "| tool_calls:", getattr(m, "tool_calls", None))
