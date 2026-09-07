@@ -124,6 +124,7 @@ def Agent_Search_Calculate(User_Input):
         ],),
     )
 
+    messages=[{'role':'user','content':User_Input}]
     while True:
         print(responses.output)
         theoutput=[]
@@ -172,7 +173,7 @@ def Agent_Search_Calculate(User_Input):
                                             summary_strings.append(f'query is : {result} and summary is {summary}')
                                         if summary_strings :
                                             new_summary_strings : str = ','.join(summary_strings)
-                                            theoutput.append( { "type": "function_call_output","call_id":cast(list[str],getattr(output, "call_id", [])) ,"output": new_summary_strings})
+                                            theoutput.append( { "type": "function_call_output","call_id":cast(list[str],getattr(output, "call_id", [])) ,"output": str(new_summary_strings)})
 
 
                                     case 'Calculator':
@@ -189,11 +190,12 @@ def Agent_Search_Calculate(User_Input):
 
         if not theoutput:
             return responses.output_text
-
+        for item in theoutput:
+            messages.append(item)
         responses = client.responses.create(
             model= qwen,
             previous_response_id=responses.id   ,
-            input =theoutput,
+            input =messages,
 
         )
 
